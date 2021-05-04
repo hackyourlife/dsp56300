@@ -32,7 +32,7 @@
 
 namespace dsp56k
 {
-	constexpr bool g_traceSupported = false;
+	constexpr bool g_traceSupported = true;
 
 	Jumptable g_jumptable;
 
@@ -523,8 +523,263 @@ namespace dsp56k
 		return true;
 	}
 
+	void DSP::trace(FILE* file)
+	{
+		traceFile = file;
+		unsigned char magic[6] = { 'X', 'T', 'R', 'C', 0xDB, 0xEC };
+		fwrite(magic, 6, 1, traceFile);
+		fflush(traceFile);
+	}
+
 	void DSP::traceOp()
 	{
+		if(!traceFile)
+			return;
+
+		unsigned char buf[21];
+
+		const auto op = memRead(MemArea_P, pcCurrentInstruction);
+
+		TWord pc = reg.pc.var;
+
+		uint64_t changed = 0;
+		if(m_prevRegStates[Reg_X].val != reg.x.var) {
+			changed |= 1LL << TRACE_REG_X;
+			m_prevRegStates[Reg_X].val = reg.x.var;
+		}
+		if(m_prevRegStates[Reg_Y].val != reg.y.var) {
+			changed |= 1LL << TRACE_REG_Y;
+			m_prevRegStates[Reg_Y].val = reg.y.var;
+		}
+		if(m_prevRegStates[Reg_A].val != reg.a.var) {
+			changed |= 1LL << TRACE_REG_A;
+			m_prevRegStates[Reg_A].val = reg.a.var;
+		}
+		if(m_prevRegStates[Reg_B].val != reg.b.var) {
+			changed |= 1LL << TRACE_REG_B;
+			m_prevRegStates[Reg_B].val = reg.b.var;
+		}
+		if(m_prevRegStates[Reg_SR].val != reg.sr.var) {
+			changed |= 1LL << TRACE_REG_SR;
+			m_prevRegStates[Reg_SR].val = reg.sr.var;
+		}
+		if(m_prevRegStates[Reg_OMR].val != reg.omr.var) {
+			changed |= 1LL << TRACE_REG_OMR;
+			m_prevRegStates[Reg_OMR].val = reg.omr.var;
+		}
+		if(m_prevRegStates[Reg_LA].val != reg.la.var) {
+			changed |= 1LL << TRACE_REG_LA;
+			m_prevRegStates[Reg_LA].val = reg.la.var;
+		}
+		if(m_prevRegStates[Reg_LC].val != reg.lc.var) {
+			changed |= 1LL << TRACE_REG_LC;
+			m_prevRegStates[Reg_LC].val = reg.lc.var;
+		}
+		if(m_prevRegStates[Reg_SP].val != reg.sp.var) {
+			changed |= 1LL << TRACE_REG_SP;
+			m_prevRegStates[Reg_SP].val = reg.sp.var;
+		}
+		if(m_prevRegStates[Reg_SC].val != reg.sc.var) {
+			changed |= 1LL << TRACE_REG_SC;
+			m_prevRegStates[Reg_SC].val = reg.sc.var;
+		}
+		if(m_prevRegStates[Reg_SZ].val != reg.sz.var) {
+			changed |= 1LL << TRACE_REG_SZ;
+			m_prevRegStates[Reg_SZ].val = reg.sz.var;
+		}
+		if(m_prevRegStates[Reg_VBA].val != reg.vba.var) {
+			changed |= 1LL << TRACE_REG_VBA;
+			m_prevRegStates[Reg_VBA].val = reg.vba.var;
+		}
+		if(m_prevRegStates[Reg_EP].val != reg.ep.var) {
+			changed |= 1LL << TRACE_REG_EP;
+			m_prevRegStates[Reg_EP].val = reg.ep.var;
+		}
+		for(int i = 0; i < 8; i++) {
+			if(m_prevRegStates[Reg_R0 + i].val != reg.r[i].var) {
+				changed |= 1LL << (TRACE_REG_RBASE + i);
+				m_prevRegStates[Reg_R0 + i].val = reg.r[i].var;
+			}
+			if(m_prevRegStates[Reg_N0 + i].val != reg.n[i].var) {
+				changed |= 1LL << (TRACE_REG_NBASE + i);
+				m_prevRegStates[Reg_N0 + i].val = reg.n[i].var;
+			}
+			if(m_prevRegStates[Reg_M0 + i].val != reg.m[i].var) {
+				changed |= 1LL << (TRACE_REG_MBASE + i);
+				m_prevRegStates[Reg_M0 + i].val = reg.m[i].var;
+			}
+		}
+
+		buf[0] = TRACE_STEP;
+
+		buf[1] = (unsigned char) (pc >> 16);
+		buf[2] = (unsigned char) (pc >> 8);
+		buf[3] = (unsigned char) pc;
+
+		// opcode: first word
+		buf[4] = (unsigned char) (op >> 16);
+		buf[5] = (unsigned char) (op >> 8);
+		buf[6] = (unsigned char) op;
+
+		// opcode: optional second word
+		buf[7] = (unsigned char) (m_opWordB >> 16);
+		buf[8] = (unsigned char) (m_opWordB >> 8);
+		buf[9] = (unsigned char) m_opWordB;
+
+		// ictr
+		buf[10] = (unsigned char) (m_instructions >> 16);
+		buf[11] = (unsigned char) (m_instructions >> 8);
+		buf[12] = (unsigned char) m_instructions;
+
+		// register change flags
+		buf[13] = (unsigned char) (changed >> 56);
+		buf[14] = (unsigned char) (changed >> 48);
+		buf[15] = (unsigned char) (changed >> 40);
+		buf[16] = (unsigned char) (changed >> 32);
+		buf[17] = (unsigned char) (changed >> 24);
+		buf[18] = (unsigned char) (changed >> 16);
+		buf[19] = (unsigned char) (changed >> 8);
+		buf[20] = (unsigned char) changed;
+
+		fwrite(buf, sizeof(buf), 1, traceFile);
+
+		size_t off = 0;
+		unsigned char regbuf[0x200];
+
+		if(changed & (1LL << TRACE_REG_X)) {
+			regbuf[off + 0] = (unsigned char) (reg.x.var >> 40);
+			regbuf[off + 1] = (unsigned char) (reg.x.var >> 32);
+			regbuf[off + 2] = (unsigned char) (reg.x.var >> 24);
+			regbuf[off + 3] = (unsigned char) (reg.x.var >> 16);
+			regbuf[off + 4] = (unsigned char) (reg.x.var >> 8);
+			regbuf[off + 5] = (unsigned char) reg.x.var;
+			off += 6;
+		}
+
+		if(changed & (1LL << TRACE_REG_Y)) {
+			regbuf[off + 0] = (unsigned char) (reg.y.var >> 40);
+			regbuf[off + 1] = (unsigned char) (reg.y.var >> 32);
+			regbuf[off + 2] = (unsigned char) (reg.y.var >> 24);
+			regbuf[off + 3] = (unsigned char) (reg.y.var >> 16);
+			regbuf[off + 4] = (unsigned char) (reg.y.var >> 8);
+			regbuf[off + 5] = (unsigned char) reg.y.var;
+			off += 6;
+		}
+
+		if(changed & (1LL << TRACE_REG_A)) {
+			regbuf[off + 0] = (unsigned char) (reg.a.var >> 48);
+			regbuf[off + 1] = (unsigned char) (reg.a.var >> 40);
+			regbuf[off + 2] = (unsigned char) (reg.a.var >> 32);
+			regbuf[off + 3] = (unsigned char) (reg.a.var >> 24);
+			regbuf[off + 4] = (unsigned char) (reg.a.var >> 16);
+			regbuf[off + 5] = (unsigned char) (reg.a.var >> 8);
+			regbuf[off + 6] = (unsigned char) reg.a.var;
+			off += 7;
+		}
+
+		if(changed & (1LL << TRACE_REG_B)) {
+			regbuf[off + 0] = (unsigned char) (reg.b.var >> 48);
+			regbuf[off + 1] = (unsigned char) (reg.b.var >> 40);
+			regbuf[off + 2] = (unsigned char) (reg.b.var >> 32);
+			regbuf[off + 3] = (unsigned char) (reg.b.var >> 24);
+			regbuf[off + 4] = (unsigned char) (reg.b.var >> 16);
+			regbuf[off + 5] = (unsigned char) (reg.b.var >> 8);
+			regbuf[off + 6] = (unsigned char) reg.b.var;
+			off += 7;
+		}
+
+		if(changed & (1LL << TRACE_REG_SR)) {
+			regbuf[off + 0] = (unsigned char) (reg.sr.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.sr.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.sr.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_OMR)) {
+			regbuf[off + 0] = (unsigned char) (reg.omr.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.omr.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.omr.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_LA)) {
+			regbuf[off + 0] = (unsigned char) (reg.la.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.la.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.la.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_LC)) {
+			regbuf[off + 0] = (unsigned char) (reg.lc.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.lc.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.lc.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_SP)) {
+			regbuf[off + 0] = (unsigned char) (reg.sp.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.sp.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.sp.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_SC)) {
+			regbuf[off++] = (unsigned char) reg.sc.var;
+		}
+
+		if(changed & (1LL << TRACE_REG_SZ)) {
+			regbuf[off + 0] = (unsigned char) (reg.sz.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.sz.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.sz.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_VBA)) {
+			regbuf[off + 0] = (unsigned char) (reg.vba.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.vba.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.vba.var;
+			off += 3;
+		}
+
+		if(changed & (1LL << TRACE_REG_EP)) {
+			regbuf[off + 0] = (unsigned char) (reg.ep.var >> 16);
+			regbuf[off + 1] = (unsigned char) (reg.ep.var >> 8);
+			regbuf[off + 2] = (unsigned char) reg.ep.var;
+			off += 3;
+		}
+
+		for(int i = 0; i < 8; i++) {
+			if(changed & (1LL << (TRACE_REG_RBASE + i))) {
+				regbuf[off + 0] = (unsigned char) (reg.r[i].var >> 16);
+				regbuf[off + 1] = (unsigned char) (reg.r[i].var >> 8);
+				regbuf[off + 2] = (unsigned char) reg.r[i].var;
+				off += 3;
+			}
+		}
+
+		for(int i = 0; i < 8; i++) {
+			if(changed & (1LL << (TRACE_REG_NBASE + i))) {
+				regbuf[off + 0] = (unsigned char) (reg.n[i].var >> 16);
+				regbuf[off + 1] = (unsigned char) (reg.n[i].var >> 8);
+				regbuf[off + 2] = (unsigned char) reg.n[i].var;
+				off += 3;
+			}
+		}
+
+		for(int i = 0; i < 8; i++) {
+			if(changed & (1LL << (TRACE_REG_MBASE + i))) {
+				regbuf[off + 0] = (unsigned char) (reg.m[i].var >> 16);
+				regbuf[off + 1] = (unsigned char) (reg.m[i].var >> 8);
+				regbuf[off + 2] = (unsigned char) reg.m[i].var;
+				off += 3;
+			}
+		}
+
+		if(off != 0) {
+			fwrite(regbuf, off, 1, traceFile);
+		}
+
+#if 0
 		if(!g_traceSupported || !m_trace)
 			return;
 
@@ -548,6 +803,7 @@ namespace dsp56k
 			dumpRegisters();
 			updatePreviousRegisterStates();
 		}
+#endif
 	}
 
 	void DSP::decSP()

@@ -8,6 +8,35 @@
 #include "opcodes.h"
 #include "logging.h"
 
+// trace record types
+#define	TRACE_STEP	0
+
+// trace register IDs
+#define	TRACE_REG_X	0
+#define	TRACE_REG_Y	1
+#define	TRACE_REG_A	2
+#define	TRACE_REG_B	3
+#define	TRACE_REG_SR	4
+#define	TRACE_REG_OMR	5
+#define	TRACE_REG_LA	6
+#define	TRACE_REG_LC	7
+#define	TRACE_REG_SP	8
+#define	TRACE_REG_EP	9
+#define	TRACE_REG_SZ	10
+#define	TRACE_REG_SC	11
+#define	TRACE_REG_VBA	12
+#define	TRACE_REG_BCR	13
+#define	TRACE_REG_DCR	14
+#define	TRACE_REG_AAR0	15
+#define	TRACE_REG_AAR1	16
+#define	TRACE_REG_AAR2	17
+#define	TRACE_REG_AAR3	18
+
+#define	TRACE_REG_RBASE	20
+#define	TRACE_REG_NBASE	28
+#define	TRACE_REG_MBASE	36
+#define	TRACE_REG_SSBASE 44
+
 namespace dsp56k
 {
 	class Memory;
@@ -1039,8 +1068,18 @@ namespace dsp56k
 	private:
 		void errNotImplemented(const char* _opName);
 		void updatePreviousRegisterStates();
+
+		FILE* traceFile = NULL;
+
 	public:
 		void coreDump(std::stringstream& _dst);
 		void coreDump();
+
+		void trace(FILE* file);
+		void traceFlush()
+		{
+			if(traceFile)
+				fflush(traceFile);
+		}
 	};
 }
